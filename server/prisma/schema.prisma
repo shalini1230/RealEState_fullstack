@@ -1,0 +1,125 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum PropertyType {
+  APARTMENT
+  HOSTEL
+  LAND
+  COMMERCIAL
+}
+
+enum PropertyStatus {
+  AVAILABLE
+  RENTED
+  SOLD
+  PENDING
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  MIXED
+}
+
+enum SharingType {
+  SINGLE
+  DOUBLE
+  TRIPLE
+  QUAD
+}
+
+enum LandUsage {
+  RESIDENTIAL
+  COMMERCIAL
+  AGRICULTURAL
+}
+
+model User {
+  id         String     @id @default(cuid())
+  email      String     @unique
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  profile    Profile?
+  properties Property[]
+}
+
+model Profile {
+  id     String  @id @default(cuid())
+  userId String  @unique
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name   String?
+  phone  String?
+  bio    String?
+}
+
+model Property {
+  id          String         @id @default(cuid())
+  title       String
+  description String?
+  price       Float
+  city        String
+  area        String
+  address     String?
+  type        PropertyType
+  status      PropertyStatus @default(AVAILABLE)
+  ownerId     String
+  owner       User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  images     String[]           @default([])
+  gpsLat     Float?
+  gpsLng     Float?
+
+  apartment  ApartmentDetails?
+  hostel     HostelDetails?
+  land       LandDetails?
+  commercial CommercialDetails?
+}
+
+model ApartmentDetails {
+  id                 String   @id @default(cuid())
+  propertyId         String   @unique
+  property           Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  rooms              Int
+  bathrooms          Int
+  floor              Int?
+  balcony            Boolean  @default(false)
+  furnished          Boolean  @default(false)
+  lift               Boolean  @default(false)
+  maintenanceCharges Float?
+}
+
+model HostelDetails {
+  id         String      @id @default(cuid())
+  propertyId String      @unique
+  property   Property    @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  gender     Gender
+  sharing    SharingType
+  wifi       Boolean     @default(false)
+  food       Boolean     @default(false)
+  curfew     String?
+}
+
+model LandDetails {
+  id         String    @id @default(cuid())
+  propertyId String    @unique
+  property   Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  sizeAcres  Float
+  roadAccess Boolean   @default(false)
+  usage      LandUsage
+}
+
+model CommercialDetails {
+  id              String   @id @default(cuid())
+  propertyId      String   @unique
+  property        Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  shopType        String
+  floorArea       Float
+  securityDeposit Float?
+}
