@@ -38,6 +38,7 @@ const baseSchema = z.object({
   title: z.string().min(3, "Title must be at least 3 characters"),
   description: z.string().optional(),
   price: z.coerce.number({ invalid_type_error: "Enter a valid price" }).positive("Price must be positive"),
+  vacancies: z.coerce.number({ invalid_type_error: "Enter a valid number" }).int().min(1, "At least 1 vacancy required"),
   city: z.string().min(1, "City is required"),
   area: z.string().min(1, "Area is required"),
   address: z.string().optional(),
@@ -67,6 +68,7 @@ export default function EditPropertyPage() {
           title: p.title,
           description: p.description || "",
           price: p.price,
+          vacancies: p.vacancies ?? 1,
           city: p.city,
           area: p.area,
           address: p.address || "",
@@ -86,12 +88,12 @@ export default function EditPropertyPage() {
   async function onSubmit(values) {
     setSubmitting(true)
     setServerError("")
-    const { title, description, price, city, area, address, ...detailFields } = values
+    const { title, description, price, vacancies, city, area, address, ...detailFields } = values
     try {
       await apiFetch(`/properties/${id}`, {
         method: "PUT",
         body: JSON.stringify({
-          title, description, price, city, area, address,
+          title, description, price, vacancies, city, area, address,
           type: property.type,
           details: detailFields,
         }),
@@ -158,9 +160,14 @@ export default function EditPropertyPage() {
             <Field label="Full address (optional)" error={errors.address?.message}>
               <Input placeholder="e.g. H.No 4-56, Main Road" {...form.register("address")} className="h-10" />
             </Field>
-            <Field label="Price (₹ / month)" error={errors.price?.message}>
-              <Input type="number" placeholder="e.g. 15000" {...form.register("price")} className="h-10" />
-            </Field>
+            <div className="grid grid-cols-2 gap-4">
+              <Field label={form.watch("type") === "LAND" ? "Price (₹ total)" : "Price (₹ / month)"} error={errors.price?.message}>
+                <Input type="number" placeholder="e.g. 15000" {...form.register("price")} className="h-10" />
+              </Field>
+              <Field label="Number of Vacancies" error={errors.vacancies?.message}>
+                <Input type="number" min={1} placeholder="e.g. 2" {...form.register("vacancies")} className="h-10" />
+              </Field>
+            </div>
           </div>
 
           {/* Type-specific details */}
@@ -245,6 +252,15 @@ export default function EditPropertyPage() {
                 <div className="grid grid-cols-2 gap-4">
                   <Field label="Shop / unit type">
                     <Input placeholder="e.g. Retail, Office" {...form.register("shopType")} className="h-10" />
+                  </Field>
+                  <Field label="Purpose">
+                    <Select value={form.watch("purpose") || "COMMERCIAL"} onValueChange={(v) => form.setValue("purpose", v)}>
+                      <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="COMMERCIAL">Commercial</SelectItem>
+                        <SelectItem value="RESIDENTIAL">Residential</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </Field>
                   <Field label="Floor area (sq ft)">
                     <Input type="number" step="0.01" {...form.register("floorArea")} className="h-10" />

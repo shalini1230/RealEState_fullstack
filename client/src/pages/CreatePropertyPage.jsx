@@ -18,6 +18,7 @@ const baseSchema = z.object({
   title: z.string().min(3, "Title must be at least 3 characters"),
   description: z.string().optional(),
   price: z.coerce.number({ invalid_type_error: "Enter a valid price" }).positive("Price must be positive"),
+  vacancies: z.coerce.number({ invalid_type_error: "Enter a valid number" }).int().min(1, "At least 1 vacancy required"),
   city: z.string().min(1, "City is required"),
   area: z.string().min(1, "Area is required"),
   address: z.string().optional(),
@@ -51,6 +52,7 @@ const commercialSchema = z.object({
   shopType: z.string().min(1, "Shop type is required"),
   floorArea: z.coerce.number().positive("Enter a valid floor area"),
   securityDeposit: z.coerce.number().optional(),
+  purpose: z.enum(["COMMERCIAL", "RESIDENTIAL"]),
 })
 
 const PROPERTY_TYPES = [
@@ -166,6 +168,15 @@ function CommercialFields({ form, errors }) {
       <Field label="Shop / unit type" error={errors.shopType}>
         <Input placeholder="e.g. Retail, Office, Warehouse" {...form.register("shopType")} className="h-10" />
       </Field>
+      <Field label="Purpose" error={errors.purpose?.message}>
+        <Select value={form.watch("purpose") || ""} onValueChange={(v) => form.setValue("purpose", v, { shouldValidate: true })}>
+          <SelectTrigger className="h-10"><SelectValue placeholder="Select purpose" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="COMMERCIAL">Commercial</SelectItem>
+            <SelectItem value="RESIDENTIAL">Residential</SelectItem>
+          </SelectContent>
+        </Select>
+      </Field>
       <Field label="Floor area (sq ft)" error={errors.floorArea}>
         <Input type="number" step="0.01" placeholder="e.g. 500" {...form.register("floorArea")} className="h-10" />
       </Field>
@@ -248,7 +259,7 @@ export default function CreatePropertyPage() {
     ? baseSchema.and(detailsSchemas[selectedType])
     : baseSchema
 
-  const TYPE_DEFAULTS = { balcony: false, furnished: false, lift: false, maintenanceCharges: undefined, wifi: false, food: false, roadAccess: false, rooms: undefined, bathrooms: undefined, floor: undefined, gender: undefined, sharing: undefined, sizeAcres: undefined, usage: undefined, shopType: undefined, floorArea: undefined, securityDeposit: undefined }
+  const TYPE_DEFAULTS = { balcony: false, furnished: false, lift: false, maintenanceCharges: undefined, wifi: false, food: false, roadAccess: false, rooms: undefined, bathrooms: undefined, floor: undefined, gender: undefined, sharing: undefined, sizeAcres: undefined, usage: undefined, shopType: undefined, floorArea: undefined, securityDeposit: undefined, purpose: undefined }
 
   const form = useForm({ resolver: zodResolver(schema), defaultValues: { balcony: false, furnished: false, lift: false, wifi: false, food: false, roadAccess: false } })
   const errors = form.formState.errors
@@ -262,12 +273,12 @@ export default function CreatePropertyPage() {
   async function onSubmit(values) {
     setSubmitting(true)
     setServerError("")
-    const { title, description, price, city, area, address, type, ...detailFields } = values
+    const { title, description, price, vacancies, city, area, address, type, ...detailFields } = values
     try {
       const images = [...(coverImage ? [coverImage] : []), ...interiorImages]
       await apiFetch("/properties", {
         method: "POST",
-        body: JSON.stringify({ title, description, price, city, area, address, type, images, gpsLat: pinLocation?.lat, gpsLng: pinLocation?.lng, details: detailFields }),
+        body: JSON.stringify({ title, description, price, vacancies, city, area, address, type, images, gpsLat: pinLocation?.lat, gpsLng: pinLocation?.lng, details: detailFields }),
       })
       navigate("/properties")
     } catch (err) {
@@ -341,9 +352,14 @@ export default function CreatePropertyPage() {
             <Field label="Full address (optional)" error={errors.address?.message}>
               <Input placeholder="e.g. #12, 5th Cross, 3rd Block" {...form.register("address")} className="h-10" />
             </Field>
-            <Field label="Price (₹ / month)" error={errors.price?.message}>
-              <Input type="number" placeholder="e.g. 15000" {...form.register("price")} className="h-10" />
-            </Field>
+            <div className="grid grid-cols-2 gap-4">
+              <Field label={selectedType === "LAND" ? "Price (₹ total)" : "Price (₹ / month)"} error={errors.price?.message}>
+                <Input type="number" placeholder="e.g. 15000" {...form.register("price")} className="h-10" />
+              </Field>
+              <Field label="Number of Vacancies" error={errors.vacancies?.message}>
+                <Input type="number" min={1} placeholder="e.g. 2" {...form.register("vacancies")} className="h-10" />
+              </Field>
+            </div>
           </div>
 
           {/* Dynamic extension fields */}

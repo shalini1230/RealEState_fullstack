@@ -9,6 +9,8 @@ const { createClient } = require('@supabase/supabase-js');
 const { z } = require('zod');
 const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
+const fs = require('fs');
+const path = require('path');
 
 const mailer = nodemailer.createTransport({
   service: 'gmail',
@@ -22,8 +24,28 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANO
 const supabaseAdmin = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
-// email → expiry timestamp (ms). Cleared on success or expiry.
-const otpExpiry = new Map();
+// OTP sessions persisted to disk so nodemon restarts don't wipe them
+const OTP_FILE = path.join(__dirname, '.otp-sessions.json');
+function readOtpSessions() {
+  try { return JSON.parse(fs.readFileSync(OTP_FILE, 'utf8')); } catch { return {}; }
+}
+function writeOtpSessions(sessions) {
+  fs.writeFileSync(OTP_FILE, JSON.stringify(sessions));
+}
+function getOtp(email) {
+  const sessions = readOtpSessions();
+  return sessions[email] || null;
+}
+function setOtp(email, record) {
+  const sessions = readOtpSessions();
+  sessions[email] = record;
+  writeOtpSessions(sessions);
+}
+function deleteOtp(email) {
+  const sessions = readOtpSessions();
+  delete sessions[email];
+  writeOtpSessions(sessions);
+}
 
 app.use(cors());
 app.use(express.json());
@@ -91,11 +113,36 @@ const PropertySchema = z.object({
   area: z.string().min(1),
   address: z.string().optional(),
   type: z.enum(['APARTMENT', 'HOSTEL', 'LAND', 'COMMERCIAL']),
+  vacancies: z.coerce.number().int().min(1).default(1),
   details: z.record(z.unknown()),
   images: z.array(z.string().url()).optional().default([]),
   gpsLat: z.coerce.number().optional(),
   gpsLng: z.coerce.number().optional(),
 });
+
+const BookingSchema = z.object({
+  propertyId: z.string().min(1),
+  name: z.string().min(1, 'Name is required'),
+  phone: z.string().min(1, 'Phone is required'),
+  email: z.string().email('Valid email required'),
+  message: z.string().optional(),
+});
+
+// ── Helper ────────────────────────────────────────────────────────────────────
+async function createNotification(userId, type, title, body, link) {
+  return prisma.notification.create({ data: { userId, type, title, body, link } });
+}
+
+function propertyInclude() {
+  return {
+    apartment: true,
+    hostel: true,
+    land: true,
+    commercial: true,
+    owner: { select: { id: true, email: true, profile: { select: { name: true, phone: true } } } },
+    _count: { select: { bookingQueue: { where: { status: 'ACCEPTED' } } } },
+  };
+}
 
 // ── Upload route ─────────────────────────────────────────────────────────────
 app.post('/upload', requireAuth, upload.single('image'), async (req, res) => {
@@ -124,7 +171,6 @@ app.post('/upload', requireAuth, upload.single('image'), async (req, res) => {
 
 // ── Auth routes ───────────────────────────────────────────────────────────────
 
-// Check if email is already registered
 app.get('/auth/check-email', async (req, res) => {
   const { email } = req.query;
   if (!email) return res.status(400).json({ error: 'Email required' });
@@ -135,7 +181,6 @@ app.get('/auth/check-email', async (req, res) => {
   res.json({ exists: !!user, name: user?.profile?.name || null });
 });
 
-// Existing user — instant login with custom JWT (no Supabase, no rate limits)
 app.post('/auth/signin', async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: 'Email required' });
@@ -155,13 +200,12 @@ app.post('/auth/signin', async (req, res) => {
   res.json({ user: dbUser, session: { access_token: token } });
 });
 
-// New user — generate OTP and send via nodemailer
 app.post('/auth/login', async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: 'Email required' });
 
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  otpExpiry.set(email, { otp, expiry: Date.now() + 30_000 });
+  setOtp(email, { otp, expiry: Date.now() + 10 * 60_000 });
 
   try {
     await mailer.sendMail({
@@ -173,7 +217,7 @@ app.post('/auth/login', async (req, res) => {
           <h2 style="color:#7c3aed">NestFinder</h2>
           <p>Your verification code is:</p>
           <h1 style="letter-spacing:8px;color:#7c3aed">${otp}</h1>
-          <p style="color:#888">This code expires in 30 seconds.</p>
+          <p style="color:#888">This code expires in 10 minutes.</p>
         </div>
       `,
     });
@@ -185,22 +229,21 @@ app.post('/auth/login', async (req, res) => {
   res.json({ message: 'OTP sent to email' });
 });
 
-// Verify OTP — enforces 30s server-side expiry
 app.post('/auth/verify', async (req, res) => {
   const { email, token, name } = req.body;
   if (!email || !token) return res.status(400).json({ error: 'Email and token required' });
 
-  const record = otpExpiry.get(email);
+  const record = getOtp(email);
   if (!record) return res.status(400).json({ error: 'No active OTP session. Please request a new code.' });
   if (Date.now() > record.expiry) {
-    otpExpiry.delete(email);
+    deleteOtp(email);
     return res.status(400).json({ error: 'OTP has expired. Please request a new one.' });
   }
   if (record.otp !== token) {
     return res.status(400).json({ error: 'Invalid OTP. Please try again.' });
   }
 
-  otpExpiry.delete(email);
+  deleteOtp(email);
 
   const user = await prisma.user.upsert({
     where: { email },
@@ -242,12 +285,11 @@ app.get('/profile', requireAuth, async (req, res) => {
 
 app.put('/profile', requireAuth, async (req, res) => {
   const { name, phone } = req.body;
-  const profile = await prisma.profile.upsert({
+  await prisma.profile.upsert({
     where: { userId: req.user.id },
     update: { name: name || null, phone: phone || null },
     create: { userId: req.user.id, name: name || null, phone: phone || null },
   });
-  // Update localStorage-compatible user shape
   const user = await prisma.user.findUnique({
     where: { id: req.user.id },
     include: { profile: true },
@@ -257,13 +299,12 @@ app.put('/profile', requireAuth, async (req, res) => {
 
 // ── Property routes ───────────────────────────────────────────────────────────
 
-// Create
 app.post('/properties', requireAuth, async (req, res) => {
   try {
     const parsed = PropertySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-    const { type, details, images, gpsLat, gpsLng, ...base } = parsed.data;
+    const { type, details, images, gpsLat, gpsLng, vacancies, ...base } = parsed.data;
 
     const detailsParsers = {
       APARTMENT: ApartmentSchema,
@@ -281,13 +322,14 @@ app.post('/properties', requireAuth, async (req, res) => {
         ...base,
         type,
         status: 'AVAILABLE',
+        vacancies: vacancies ?? 1,
         images: images ?? [],
         gpsLat: gpsLat ?? null,
         gpsLng: gpsLng ?? null,
         ownerId: req.user.id,
         [extensionKey]: { create: detailsParsed.data },
       },
-      include: { apartment: true, hostel: true, land: true, commercial: true },
+      include: propertyInclude(),
     });
 
     res.status(201).json(property);
@@ -297,7 +339,6 @@ app.post('/properties', requireAuth, async (req, res) => {
   }
 });
 
-// List (with optional filters)
 app.get('/properties', async (req, res) => {
   const { city, area, type, status } = req.query;
 
@@ -309,37 +350,23 @@ app.get('/properties', async (req, res) => {
 
   const properties = await prisma.property.findMany({
     where,
-    include: {
-      apartment: true,
-      hostel: true,
-      land: true,
-      commercial: true,
-      owner: { select: { id: true, email: true, profile: { select: { name: true, phone: true } } } },
-    },
+    include: propertyInclude(),
     orderBy: { createdAt: 'desc' },
   });
 
   res.json(properties);
 });
 
-// Single
 app.get('/properties/:id', async (req, res) => {
   const property = await prisma.property.findUnique({
     where: { id: req.params.id },
-    include: {
-      apartment: true,
-      hostel: true,
-      land: true,
-      commercial: true,
-      owner: { select: { id: true, email: true, profile: { select: { name: true, phone: true } } } },
-    },
+    include: propertyInclude(),
   });
 
   if (!property) return res.status(404).json({ error: 'Property not found' });
   res.json(property);
 });
 
-// Update
 app.put('/properties/:id', requireAuth, async (req, res) => {
   const existing = await prisma.property.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'Property not found' });
@@ -369,13 +396,12 @@ app.put('/properties/:id', requireAuth, async (req, res) => {
   const property = await prisma.property.update({
     where: { id: req.params.id },
     data: updateData,
-    include: { apartment: true, hostel: true, land: true, commercial: true },
+    include: propertyInclude(),
   });
 
   res.json(property);
 });
 
-// Delete
 app.delete('/properties/:id', requireAuth, async (req, res) => {
   const existing = await prisma.property.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'Property not found' });
@@ -385,16 +411,314 @@ app.delete('/properties/:id', requireAuth, async (req, res) => {
   res.json({ message: 'Deleted' });
 });
 
-// My properties
 app.get('/my-properties', requireAuth, async (req, res) => {
   const properties = await prisma.property.findMany({
     where: { ownerId: req.user.id },
-    include: { apartment: true, hostel: true, land: true, commercial: true },
+    include: propertyInclude(),
     orderBy: { createdAt: 'desc' },
   });
   res.json(properties);
 });
 
+// ── Booking routes ────────────────────────────────────────────────────────────
+
+// POST /bookings — tenant joins queue
+app.post('/bookings', requireAuth, async (req, res) => {
+  try {
+    const parsed = BookingSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const { propertyId, name, phone, email, message } = parsed.data;
+
+    const property = await prisma.property.findUnique({
+      where: { id: propertyId },
+      include: { owner: { include: { profile: true } } },
+    });
+    if (!property) return res.status(404).json({ error: 'Property not found' });
+    if (property.ownerId === req.user.id) return res.status(400).json({ error: 'Cannot book your own property' });
+    if (property.status !== 'AVAILABLE') return res.status(400).json({ error: 'Property is not available for booking' });
+
+    // Check existing booking
+    const existing = await prisma.bookingQueue.findUnique({
+      where: { propertyId_tenantId: { propertyId, tenantId: req.user.id } },
+    });
+    if (existing && existing.status === 'PENDING') {
+      return res.status(400).json({ error: 'You already have a pending request for this property' });
+    }
+
+    // Create or re-create booking (reset createdAt for fair FIFO on re-join)
+    let booking;
+    if (existing) {
+      booking = await prisma.bookingQueue.update({
+        where: { id: existing.id },
+        data: { status: 'PENDING', name, phone, email, message: message || null, createdAt: new Date() },
+      });
+    } else {
+      booking = await prisma.bookingQueue.create({
+        data: { propertyId, tenantId: req.user.id, name, phone, email, message: message || null },
+      });
+    }
+
+    // Queue position
+    const position = await prisma.bookingQueue.count({
+      where: { propertyId, status: 'PENDING', createdAt: { lt: booking.createdAt } },
+    }) + 1;
+
+    // Notify owner
+    await createNotification(
+      property.ownerId,
+      'BOOKING_RECEIVED',
+      'New Booking Request',
+      `${name} has requested to book "${property.title}"`,
+      `/requests`
+    );
+
+    res.status(201).json({ ...booking, position });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || 'Failed to submit booking' });
+  }
+});
+
+// GET /bookings/my — tenant's bookings with positions
+app.get('/bookings/my', requireAuth, async (req, res) => {
+  const bookings = await prisma.bookingQueue.findMany({
+    where: { tenantId: req.user.id },
+    include: {
+      property: { include: propertyInclude() },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const withPositions = await Promise.all(bookings.map(async (b) => {
+    if (b.status !== 'PENDING') return { ...b, position: null };
+    const position = await prisma.bookingQueue.count({
+      where: { propertyId: b.propertyId, status: 'PENDING', createdAt: { lt: b.createdAt } },
+    }) + 1;
+    return { ...b, position };
+  }));
+
+  res.json(withPositions);
+});
+
+// GET /bookings/check/:propertyId — check my booking status for a property
+app.get('/bookings/check/:propertyId', requireAuth, async (req, res) => {
+  const booking = await prisma.bookingQueue.findUnique({
+    where: { propertyId_tenantId: { propertyId: req.params.propertyId, tenantId: req.user.id } },
+  });
+  if (!booking) return res.json(null);
+
+  let position = null;
+  if (booking.status === 'PENDING') {
+    position = await prisma.bookingQueue.count({
+      where: { propertyId: req.params.propertyId, status: 'PENDING', createdAt: { lt: booking.createdAt } },
+    }) + 1;
+  }
+  res.json({ ...booking, position });
+});
+
+// GET /properties/:id/queue — owner sees the queue for their property
+app.get('/properties/:id/queue', requireAuth, async (req, res) => {
+  const property = await prisma.property.findUnique({ where: { id: req.params.id } });
+  if (!property) return res.status(404).json({ error: 'Property not found' });
+  if (property.ownerId !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
+
+  const queue = await prisma.bookingQueue.findMany({
+    where: { propertyId: req.params.id },
+    include: {
+      tenant: { select: { id: true, email: true, profile: { select: { name: true, phone: true } } } },
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  let pos = 1;
+  const result = queue.map((b) => ({
+    ...b,
+    position: b.status === 'PENDING' ? pos++ : null,
+  }));
+
+  res.json(result);
+});
+
+// GET /requests — owner sees ALL requests across their properties
+app.get('/requests', requireAuth, async (req, res) => {
+  const properties = await prisma.property.findMany({
+    where: { ownerId: req.user.id },
+    select: { id: true },
+  });
+  const propertyIds = properties.map((p) => p.id);
+
+  const bookings = await prisma.bookingQueue.findMany({
+    where: { propertyId: { in: propertyIds } },
+    include: {
+      property: { select: { id: true, title: true, city: true, area: true, price: true, vacancies: true, images: true, _count: { select: { bookingQueue: { where: { status: 'ACCEPTED' } } } } } },
+      tenant: { select: { id: true, email: true } },
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  res.json(bookings);
+});
+
+// PUT /bookings/:id/status — accept/reject (owner) or cancel (tenant)
+app.put('/bookings/:id/status', requireAuth, async (req, res) => {
+  try {
+    const { status } = req.body;
+    if (!['ACCEPTED', 'REJECTED', 'CANCELLED'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid status' });
+    }
+
+    const booking = await prisma.bookingQueue.findUnique({
+      where: { id: req.params.id },
+      include: {
+        property: true,
+        tenant: { include: { profile: true } },
+      },
+    });
+    if (!booking) return res.status(404).json({ error: 'Booking not found' });
+
+    const isOwner = booking.property.ownerId === req.user.id;
+    const isTenant = booking.tenantId === req.user.id;
+
+    if (!isOwner && !isTenant) return res.status(403).json({ error: 'Forbidden' });
+    if (isTenant && status !== 'CANCELLED') return res.status(403).json({ error: 'Tenants can only cancel bookings' });
+    if (isOwner && status === 'CANCELLED') return res.status(403).json({ error: 'Owners cannot cancel bookings' });
+    if (booking.status !== 'PENDING') return res.status(400).json({ error: 'Booking is no longer pending' });
+
+    await prisma.bookingQueue.update({ where: { id: req.params.id }, data: { status } });
+
+    if (status === 'ACCEPTED') {
+      const acceptedCount = await prisma.bookingQueue.count({
+        where: { propertyId: booking.propertyId, status: 'ACCEPTED' },
+      });
+
+      // Notify accepted tenant
+      await createNotification(
+        booking.tenantId,
+        'BOOKING_ACCEPTED',
+        'Booking Accepted!',
+        `Your booking request for "${booking.property.title}" has been accepted. The owner will contact you soon.`,
+        `/bookings`
+      );
+
+      // If vacancies are now full, close the queue
+      if (acceptedCount >= booking.property.vacancies) {
+        await prisma.property.update({ where: { id: booking.propertyId }, data: { status: 'PENDING' } });
+
+        const others = await prisma.bookingQueue.findMany({
+          where: { propertyId: booking.propertyId, status: 'PENDING' },
+        });
+
+        for (const other of others) {
+          await prisma.bookingQueue.update({ where: { id: other.id }, data: { status: 'REJECTED' } });
+          await createNotification(
+            other.tenantId,
+            'BOOKING_REJECTED',
+            'Booking Request Declined',
+            `All vacancies for "${booking.property.title}" have been filled. Better luck next time!`,
+            `/bookings`
+          );
+        }
+      }
+    } else if (status === 'REJECTED') {
+      await createNotification(
+        booking.tenantId,
+        'BOOKING_REJECTED',
+        'Booking Request Declined',
+        `Your request for "${booking.property.title}" was declined by the owner.`,
+        `/bookings`
+      );
+    } else if (status === 'CANCELLED') {
+      await createNotification(
+        booking.property.ownerId,
+        'BOOKING_CANCELLED',
+        'Booking Cancelled',
+        `${booking.name} has withdrawn their booking request for "${booking.property.title}".`,
+        `/requests`
+      );
+    }
+
+    // Return updated property so UI can refresh vacancy count
+    const updatedProperty = await prisma.property.findUnique({
+      where: { id: booking.propertyId },
+      include: propertyInclude(),
+    });
+
+    res.json({ message: 'Status updated', property: updatedProperty });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || 'Failed to update booking' });
+  }
+});
+
+// ── Notification routes ───────────────────────────────────────────────────────
+
+// IMPORTANT: /notifications/read-all must be before /notifications/:id/read
+app.put('/notifications/read-all', requireAuth, async (req, res) => {
+  await prisma.notification.updateMany({
+    where: { userId: req.user.id, isRead: false },
+    data: { isRead: true },
+  });
+  res.json({ message: 'All notifications marked as read' });
+});
+
+app.get('/notifications', requireAuth, async (req, res) => {
+  const notifications = await prisma.notification.findMany({
+    where: { userId: req.user.id },
+    orderBy: { createdAt: 'desc' },
+  });
+  res.json(notifications);
+});
+
+app.put('/notifications/:id/read', requireAuth, async (req, res) => {
+  const notif = await prisma.notification.findUnique({ where: { id: req.params.id } });
+  if (!notif || notif.userId !== req.user.id) return res.status(404).json({ error: 'Not found' });
+  const updated = await prisma.notification.update({ where: { id: req.params.id }, data: { isRead: true } });
+  res.json(updated);
+});
+
+// ── Wishlist routes ───────────────────────────────────────────────────────────
+
+// GET /wishlist — all saved properties
+app.get('/wishlist', requireAuth, async (req, res) => {
+  const items = await prisma.wishlist.findMany({
+    where: { userId: req.user.id },
+    include: { property: { include: propertyInclude() } },
+    orderBy: { createdAt: 'desc' },
+  });
+  res.json(items.map((i) => i.property));
+});
+
+// GET /wishlist/check/:propertyId — is this property wishlisted?
+app.get('/wishlist/check/:propertyId', requireAuth, async (req, res) => {
+  const item = await prisma.wishlist.findUnique({
+    where: { userId_propertyId: { userId: req.user.id, propertyId: req.params.propertyId } },
+  });
+  res.json({ wishlisted: !!item });
+});
+
+// POST /wishlist/:propertyId — add to wishlist
+app.post('/wishlist/:propertyId', requireAuth, async (req, res) => {
+  const { propertyId } = req.params;
+  const property = await prisma.property.findUnique({ where: { id: propertyId } });
+  if (!property) return res.status(404).json({ error: 'Property not found' });
+  await prisma.wishlist.upsert({
+    where: { userId_propertyId: { userId: req.user.id, propertyId } },
+    update: {},
+    create: { userId: req.user.id, propertyId },
+  });
+  res.json({ wishlisted: true });
+});
+
+// DELETE /wishlist/:propertyId — remove from wishlist
+app.delete('/wishlist/:propertyId', requireAuth, async (req, res) => {
+  await prisma.wishlist.deleteMany({
+    where: { userId: req.user.id, propertyId: req.params.propertyId },
+  });
+  res.json({ wishlisted: false });
+});
+
+// ── Error handler ─────────────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
   console.error(err);
   res.status(500).json({ error: err.message || 'Internal server error' });

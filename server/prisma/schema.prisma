@@ -39,13 +39,30 @@ enum LandUsage {
   AGRICULTURAL
 }
 
+enum BookingStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  CANCELLED
+}
+
+enum NotificationType {
+  BOOKING_RECEIVED
+  BOOKING_ACCEPTED
+  BOOKING_REJECTED
+  BOOKING_CANCELLED
+}
+
 model User {
-  id         String     @id @default(cuid())
-  email      String     @unique
-  createdAt  DateTime   @default(now())
-  updatedAt  DateTime   @updatedAt
-  profile    Profile?
-  properties Property[]
+  id            String         @id @default(cuid())
+  email         String         @unique
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  profile       Profile?
+  properties    Property[]
+  bookings      BookingQueue[] @relation("TenantBookings")
+  notifications Notification[]
+  wishlist      Wishlist[]
 }
 
 model Profile {
@@ -58,28 +75,31 @@ model Profile {
 }
 
 model Property {
-  id          String         @id @default(cuid())
-  title       String
-  description String?
-  price       Float
-  city        String
-  area        String
-  address     String?
-  type        PropertyType
-  status      PropertyStatus @default(AVAILABLE)
-  ownerId     String
-  owner       User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  id           String         @id @default(cuid())
+  title        String
+  description  String?
+  price        Float
+  city         String
+  area         String
+  address      String?
+  type         PropertyType
+  status       PropertyStatus @default(AVAILABLE)
+  vacancies    Int            @default(1)
+  ownerId      String
+  owner        User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
 
-  images     String[]           @default([])
-  gpsLat     Float?
-  gpsLng     Float?
+  images       String[]           @default([])
+  gpsLat       Float?
+  gpsLng       Float?
 
-  apartment  ApartmentDetails?
-  hostel     HostelDetails?
-  land       LandDetails?
-  commercial CommercialDetails?
+  apartment    ApartmentDetails?
+  hostel       HostelDetails?
+  land         LandDetails?
+  commercial   CommercialDetails?
+  bookingQueue BookingQueue[]
+  wishlist     Wishlist[]
 }
 
 model ApartmentDetails {
@@ -115,11 +135,57 @@ model LandDetails {
   usage      LandUsage
 }
 
+enum CommercialPurpose {
+  COMMERCIAL
+  RESIDENTIAL
+}
+
 model CommercialDetails {
-  id              String   @id @default(cuid())
-  propertyId      String   @unique
-  property        Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  id              String            @id @default(cuid())
+  propertyId      String            @unique
+  property        Property          @relation(fields: [propertyId], references: [id], onDelete: Cascade)
   shopType        String
   floorArea       Float
   securityDeposit Float?
+  purpose         CommercialPurpose @default(COMMERCIAL)
+}
+
+model BookingQueue {
+  id         String        @id @default(cuid())
+  propertyId String
+  property   Property      @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  tenantId   String
+  tenant     User          @relation("TenantBookings", fields: [tenantId], references: [id], onDelete: Cascade)
+  status     BookingStatus @default(PENDING)
+  name       String
+  phone      String
+  email      String
+  message    String?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@unique([propertyId, tenantId])
+}
+
+model Wishlist {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, propertyId])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  body      String
+  isRead    Boolean          @default(false)
+  link      String?
+  createdAt DateTime         @default(now())
 }

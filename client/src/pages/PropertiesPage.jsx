@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   Building2, Plus, Search, MapPin, IndianRupee,
-  Home, Hotel, Landmark, Store, Loader2, ArrowLeft
+  Home, Hotel, Landmark, Store, Loader2, ArrowLeft, Heart
 } from "lucide-react"
 
 const TYPE_META = {
@@ -23,27 +23,51 @@ const STATUS_COLORS = {
   PENDING: "text-amber-700 bg-amber-50 border-amber-200",
 }
 
-function PropertyCard({ property, onClick }) {
+function PropertyCard({ property, onClick, isWishlisted, onToggleWishlist, isOwner }) {
+  const [toggling, setToggling] = useState(false)
   const meta = TYPE_META[property.type]
   const details = property.apartment || property.hostel || property.land || property.commercial
   const coverImage = property.images?.[0] || meta.defaultImg
 
+  async function handleHeart(e) {
+    e.stopPropagation()
+    if (toggling) return
+    setToggling(true)
+    await onToggleWishlist(property.id, isWishlisted)
+    setToggling(false)
+  }
+
   return (
-    <button
+    <div
       onClick={onClick}
-      className="text-left bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-md hover:border-slate-200 transition-all overflow-hidden flex flex-col"
+      className="cursor-pointer text-left bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-md hover:border-slate-200 transition-all overflow-hidden flex flex-col"
     >
       {/* Cover photo */}
       <div className="relative w-full" style={{ height: 180 }}>
         <img src={coverImage} alt={property.title} className="w-full h-full object-cover" />
+
         {/* Status badge */}
-        <span className={`absolute top-2 right-2 text-xs px-2 py-0.5 rounded-full border font-medium backdrop-blur-sm ${STATUS_COLORS[property.status]}`}>
+        <span className={`absolute top-2 left-2 text-xs px-2 py-0.5 rounded-full border font-medium backdrop-blur-sm ${STATUS_COLORS[property.status]}`}>
           {property.status.charAt(0) + property.status.slice(1).toLowerCase()}
         </span>
+
         {/* Type badge */}
-        <span className="absolute top-2 left-2 text-xs font-medium px-2 py-0.5 rounded-full backdrop-blur-sm" style={{ background: meta.bg, color: meta.color }}>
+        <span className="absolute bottom-2 left-2 text-xs font-medium px-2 py-0.5 rounded-full backdrop-blur-sm bg-white/90" style={{ color: meta.color }}>
           {meta.label}
         </span>
+
+        {/* Heart button — only for logged-in non-owners */}
+        {!isOwner && (
+          <button
+            onClick={handleHeart}
+            className="absolute top-2 right-2 w-8 h-8 rounded-full bg-white/90 backdrop-blur-sm flex items-center justify-center shadow-sm hover:scale-110 transition-transform"
+          >
+            {toggling
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />
+              : <Heart className={`w-3.5 h-3.5 transition-colors ${isWishlisted ? "fill-red-500 text-red-500" : "text-slate-400"}`} />
+            }
+          </button>
+        )}
       </div>
 
       {/* Card body */}
@@ -59,7 +83,7 @@ function PropertyCard({ property, onClick }) {
         <div className="flex items-center gap-1 text-slate-900 font-bold mt-auto">
           <IndianRupee className="w-4 h-4" />
           <span>{property.price.toLocaleString('en-IN')}</span>
-          <span className="text-xs text-slate-400 font-normal ml-0.5">/mo</span>
+          {property.type !== "LAND" && <span className="text-xs text-slate-400 font-normal ml-0.5">/mo</span>}
         </div>
 
         {details && (
@@ -71,7 +95,7 @@ function PropertyCard({ property, onClick }) {
           </div>
         )}
       </div>
-    </button>
+    </div>
   )
 }
 
@@ -82,6 +106,9 @@ export default function PropertiesPage() {
   const [city, setCity] = useState("")
   const [area, setArea] = useState("")
   const [type, setType] = useState("ALL")
+  const [wishlistedIds, setWishlistedIds] = useState(new Set())
+
+  const currentUser = JSON.parse(localStorage.getItem("user") || "null")
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -100,6 +127,27 @@ export default function PropertiesPage() {
   }, [city, area, type])
 
   useEffect(() => { load() }, [load])
+
+  // Load wishlist IDs on mount (only if logged in)
+  useEffect(() => {
+    if (!currentUser) return
+    apiFetch("/wishlist")
+      .then((data) => setWishlistedIds(new Set(data.map((p) => p.id))))
+      .catch(() => {})
+  }, [])
+
+  async function handleToggleWishlist(propertyId, currentlyWishlisted) {
+    if (!currentUser) { navigate("/login"); return }
+    try {
+      if (currentlyWishlisted) {
+        await apiFetch(`/wishlist/${propertyId}`, { method: "DELETE" })
+        setWishlistedIds((prev) => { const next = new Set(prev); next.delete(propertyId); return next })
+      } else {
+        await apiFetch(`/wishlist/${propertyId}`, { method: "POST" })
+        setWishlistedIds((prev) => new Set([...prev, propertyId]))
+      }
+    } catch {}
+  }
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -187,7 +235,14 @@ export default function PropertiesPage() {
             <p className="text-sm text-slate-400">{properties.length} {properties.length === 1 ? "property" : "properties"} found</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {properties.map((p) => (
-                <PropertyCard key={p.id} property={p} onClick={() => navigate(`/properties/${p.id}`)} />
+                <PropertyCard
+                  key={p.id}
+                  property={p}
+                  onClick={() => navigate(`/properties/${p.id}`)}
+                  isWishlisted={wishlistedIds.has(p.id)}
+                  onToggleWishlist={handleToggleWishlist}
+                  isOwner={currentUser?.id === p.ownerId}
+                />
               ))}
             </div>
           </>
