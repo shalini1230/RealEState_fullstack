@@ -44,7 +44,7 @@ function extractEmbedUrl(text) {
   return null
 }
 
-export default function LocationPicker({ onSelect, initialCoords = null, initialAddress = "", initialEmbedUrl = null }) {
+export default function LocationPicker({ onSelect, initialCoords = null, initialAddress = "", initialEmbedUrl = null, showLinkPaste = true }) {
   const [query, setQuery] = useState(initialAddress)
   const [mapQuery, setMapQuery] = useState(
     initialCoords ? `loc:${initialCoords.lat},${initialCoords.lng}` : ""
@@ -314,28 +314,30 @@ export default function LocationPicker({ onSelect, initialCoords = null, initial
       </button>
 
       {/* Paste a Google Maps link or coordinates */}
-      <div className="space-y-1.5">
-        <div className="flex items-center gap-2 h-11 px-3 bg-white border border-slate-200 rounded-xl shadow-sm focus-within:border-violet-400 focus-within:ring-2 focus-within:ring-violet-100 transition-all">
-          <LinkIcon className="w-4 h-4 text-slate-400 shrink-0" />
-          <input
-            type="text"
-            value={linkInput}
-            onChange={(e) => { setLinkInput(e.target.value); setLinkError("") }}
-            onKeyDown={(e) => e.key === "Enter" && handleLinkSubmit()}
-            placeholder="Paste a Google Maps link or “lat, lng”…"
-            className="flex-1 bg-transparent text-sm text-slate-800 placeholder:text-slate-400 outline-none"
-          />
-          <button
-            type="button"
-            onClick={handleLinkSubmit}
-            disabled={resolvingLink}
-            className="text-xs font-semibold text-violet-600 hover:text-violet-700 disabled:opacity-50 shrink-0"
-          >
-            {resolvingLink ? <Loader2 className="w-4 h-4 animate-spin" /> : "Locate"}
-          </button>
+      {showLinkPaste && (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2 h-11 px-3 bg-white border border-slate-200 rounded-xl shadow-sm focus-within:border-violet-400 focus-within:ring-2 focus-within:ring-violet-100 transition-all">
+            <LinkIcon className="w-4 h-4 text-slate-400 shrink-0" />
+            <input
+              type="text"
+              value={linkInput}
+              onChange={(e) => { setLinkInput(e.target.value); setLinkError("") }}
+              onKeyDown={(e) => e.key === "Enter" && handleLinkSubmit()}
+              placeholder="Paste a Google Maps link or “lat, lng”…"
+              className="flex-1 bg-transparent text-sm text-slate-800 placeholder:text-slate-400 outline-none"
+            />
+            <button
+              type="button"
+              onClick={handleLinkSubmit}
+              disabled={resolvingLink}
+              className="text-xs font-semibold text-violet-600 hover:text-violet-700 disabled:opacity-50 shrink-0"
+            >
+              {resolvingLink ? <Loader2 className="w-4 h-4 animate-spin" /> : "Locate"}
+            </button>
+          </div>
+          {linkError && <p className="text-xs text-red-500">{linkError}</p>}
         </div>
-        {linkError && <p className="text-xs text-red-500">{linkError}</p>}
-      </div>
+      )}
 
       {/* Paste a Google Maps embed (Share → Embed a map) */}
       <div className="space-y-1.5">

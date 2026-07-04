@@ -251,6 +251,7 @@ export default function EditPropertyPage() {
                   initialCoords={pinLocation?.lat ? { lat: pinLocation.lat, lng: pinLocation.lng } : null}
                   initialAddress={pinLocation?.address || ""}
                   initialEmbedUrl={pinLocation?.mapEmbedUrl || null}
+                  showLinkPaste={false}
                 />
               )}
             </div>
