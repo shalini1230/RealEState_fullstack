@@ -278,7 +278,7 @@ export default function CreatePropertyPage() {
       const images = [...(coverImage ? [coverImage] : []), ...interiorImages]
       await apiFetch("/properties", {
         method: "POST",
-        body: JSON.stringify({ title, description, price, vacancies, city, area, address, type, images, gpsLat: pinLocation?.lat, gpsLng: pinLocation?.lng, details: detailFields }),
+        body: JSON.stringify({ title, description, price, vacancies, city, area, address, type, images, gpsLat: pinLocation?.lat, gpsLng: pinLocation?.lng, mapEmbedUrl: pinLocation?.mapEmbedUrl, details: detailFields }),
       })
       navigate("/properties")
     } catch (err) {
@@ -386,7 +386,11 @@ export default function CreatePropertyPage() {
                 </span>
               )}
             </div>
-            <LocationPicker onSelect={(coords) => setPinLocation(coords)} />
+            <LocationPicker
+              onSelect={(coords) => setPinLocation(coords)}
+              initialCoords={pinLocation?.lat ? { lat: pinLocation.lat, lng: pinLocation.lng } : null}
+              initialAddress={pinLocation?.address || ""}
+            />
           </div>
 
           {/* Cover Photo */}

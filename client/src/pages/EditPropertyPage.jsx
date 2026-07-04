@@ -10,7 +10,8 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Building2, ArrowLeft, Loader2, Home, Hotel, Landmark, Store } from "lucide-react"
+import { Building2, ArrowLeft, Loader2, Home, Hotel, Landmark, Store, MapPin, ChevronDown, UploadCloud, X } from "lucide-react"
+import LocationPicker from "@/components/LocationPicker"
 
 function Field({ label, error, children }) {
   return (
@@ -51,8 +52,54 @@ export default function EditPropertyPage() {
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [serverError, setServerError] = useState("")
+  const [pinLocation, setPinLocation] = useState(null)
+  const [showLocationPicker, setShowLocationPicker] = useState(false)
+  const [coverImage, setCoverImage] = useState(null)
+  const [interiorImages, setInteriorImages] = useState([])
+  const [uploadingCover, setUploadingCover] = useState(false)
+  const [uploadingInterior, setUploadingInterior] = useState(false)
+  const [uploadError, setUploadError] = useState("")
 
   const form = useForm({ resolver: zodResolver(baseSchema) })
+
+  async function uploadFile(file) {
+    const session = JSON.parse(localStorage.getItem("session") || "null")
+    if (!session?.access_token) throw new Error("Session expired — please log in again.")
+    const formData = new FormData()
+    formData.append("image", file)
+    const res = await fetch("http://localhost:3000/upload", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session.access_token}` },
+      body: formData,
+    })
+    if (!res.ok) throw new Error("Upload failed")
+    const data = await res.json()
+    return data.url
+  }
+
+  async function handleCoverUpload(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploadingCover(true)
+    setUploadError("")
+    try { setCoverImage(await uploadFile(file)) }
+    catch (err) { setUploadError(err.message) }
+    finally { setUploadingCover(false) }
+  }
+
+  async function handleInteriorUpload(e) {
+    const files = Array.from(e.target.files || [])
+    if (!files.length) return
+    setUploadingInterior(true)
+    setUploadError("")
+    try {
+      for (const file of files) {
+        const url = await uploadFile(file)
+        setInteriorImages(prev => [...prev, url])
+      }
+    } catch (err) { setUploadError(err.message) }
+    finally { setUploadingInterior(false) }
+  }
   const errors = form.formState.errors
 
   useEffect(() => {
@@ -64,6 +111,13 @@ export default function EditPropertyPage() {
           return
         }
         setProperty(p)
+        if ((p.gpsLat != null && p.gpsLng != null) || p.mapEmbedUrl) {
+          setPinLocation({ lat: p.gpsLat, lng: p.gpsLng, address: p.address || "", mapEmbedUrl: p.mapEmbedUrl || null })
+        }
+        if (p.images?.length) {
+          setCoverImage(p.images[0])
+          setInteriorImages(p.images.slice(1))
+        }
         form.reset({
           title: p.title,
           description: p.description || "",
@@ -96,6 +150,10 @@ export default function EditPropertyPage() {
           title, description, price, vacancies, city, area, address,
           type: property.type,
           details: detailFields,
+          gpsLat: pinLocation?.lat ?? property.gpsLat ?? null,
+          gpsLng: pinLocation?.lng ?? property.gpsLng ?? null,
+          mapEmbedUrl: pinLocation?.mapEmbedUrl ?? property.mapEmbedUrl ?? null,
+          images: [...(coverImage ? [coverImage] : []), ...interiorImages],
         }),
       })
       navigate(`/properties/${id}`)
@@ -160,6 +218,43 @@ export default function EditPropertyPage() {
             <Field label="Full address (optional)" error={errors.address?.message}>
               <Input placeholder="e.g. H.No 4-56, Main Road" {...form.register("address")} className="h-10" />
             </Field>
+
+            {/* Location pin */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="flex items-center gap-1.5">
+                  <MapPin className="w-3.5 h-3.5 text-violet-500" /> Pin Location on Map
+                </Label>
+                <button
+                  type="button"
+                  onClick={() => setShowLocationPicker(v => !v)}
+                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100"
+                >
+                  <MapPin className="w-3 h-3" />
+                  {showLocationPicker ? "Close Map" : (pinLocation?.lat ? "Update Location" : "Set Location")}
+                  <ChevronDown className={`w-3 h-3 transition-transform ${showLocationPicker ? "rotate-180" : ""}`} />
+                </button>
+              </div>
+              {(pinLocation?.lat != null || property?.gpsLat != null || pinLocation?.mapEmbedUrl || property?.mapEmbedUrl) && !showLocationPicker && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-green-50 border border-green-200">
+                  <MapPin className="w-3.5 h-3.5 text-green-600 shrink-0" />
+                  <span className="text-xs text-green-700 font-medium">
+                    {(pinLocation?.lat ?? property?.gpsLat) != null
+                      ? `Location fixed · ${(pinLocation?.lat ?? property?.gpsLat).toFixed(5)}, ${(pinLocation?.lng ?? property?.gpsLng).toFixed(5)}`
+                      : "Location fixed · custom Google Maps embed"}
+                  </span>
+                </div>
+              )}
+              {showLocationPicker && (
+                <LocationPicker
+                  onSelect={(loc) => { setPinLocation(loc); setShowLocationPicker(false) }}
+                  initialCoords={pinLocation?.lat ? { lat: pinLocation.lat, lng: pinLocation.lng } : null}
+                  initialAddress={pinLocation?.address || ""}
+                  initialEmbedUrl={pinLocation?.mapEmbedUrl || null}
+                />
+              )}
+            </div>
+
             <div className="grid grid-cols-2 gap-4">
               <Field label={form.watch("type") === "LAND" ? "Price (₹ total)" : "Price (₹ / month)"} error={errors.price?.message}>
                 <Input type="number" placeholder="e.g. 15000" {...form.register("price")} className="h-10" />
@@ -272,6 +367,71 @@ export default function EditPropertyPage() {
               )}
             </div>
           )}
+
+          {/* Cover Photo */}
+          <div className="bg-white rounded-2xl border border-slate-100 p-6 space-y-4">
+            <div>
+              <h2 className="font-semibold text-slate-900">Cover Photo</h2>
+              <p className="text-xs text-slate-400 mt-0.5">First image people see in the listing.</p>
+            </div>
+            {coverImage ? (
+              <div className="relative rounded-xl overflow-hidden border border-slate-100" style={{ height: 200 }}>
+                <img src={coverImage} alt="cover" className="w-full h-full object-cover" />
+                <button
+                  type="button"
+                  onClick={() => setCoverImage(null)}
+                  className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+                <label className="absolute bottom-2 right-2 cursor-pointer">
+                  <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleCoverUpload} disabled={uploadingCover} />
+                  <span className="text-xs bg-black/60 text-white px-2.5 py-1 rounded-full hover:bg-black/80 transition-colors">
+                    {uploadingCover ? "Uploading…" : "Replace"}
+                  </span>
+                </label>
+                <span className="absolute bottom-2 left-2 text-xs bg-black/50 text-white px-2 py-0.5 rounded-full">Cover</span>
+              </div>
+            ) : (
+              <label className={`flex flex-col items-center justify-center gap-2 border-2 border-dashed rounded-xl p-8 cursor-pointer transition-colors ${uploadingCover ? "border-slate-200 bg-slate-50" : "border-slate-300 hover:border-violet-400 hover:bg-violet-50"}`}>
+                <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleCoverUpload} disabled={uploadingCover} />
+                {uploadingCover ? <Loader2 className="w-6 h-6 text-slate-400 animate-spin" /> : <UploadCloud className="w-6 h-6 text-slate-400" />}
+                <span className="text-sm text-slate-500">{uploadingCover ? "Uploading…" : "Click to upload cover photo"}</span>
+                <span className="text-xs text-slate-400">JPEG, PNG, WebP · Max 10MB</span>
+              </label>
+            )}
+          </div>
+
+          {/* Interior Photos */}
+          <div className="bg-white rounded-2xl border border-slate-100 p-6 space-y-4">
+            <div>
+              <h2 className="font-semibold text-slate-900">Interior Photos</h2>
+              <p className="text-xs text-slate-400 mt-0.5">Rooms, kitchen, bathrooms and other spaces.</p>
+            </div>
+            {interiorImages.length > 0 && (
+              <div className="grid grid-cols-3 gap-2">
+                {interiorImages.map((url, i) => (
+                  <div key={i} className="relative rounded-xl overflow-hidden border border-slate-100 aspect-square">
+                    <img src={url} alt={`interior ${i + 1}`} className="w-full h-full object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => setInteriorImages(prev => prev.filter((_, j) => j !== i))}
+                      className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <label className={`flex flex-col items-center justify-center gap-2 border-2 border-dashed rounded-xl p-6 cursor-pointer transition-colors ${uploadingInterior ? "border-slate-200 bg-slate-50" : "border-slate-300 hover:border-violet-400 hover:bg-violet-50"}`}>
+              <input type="file" accept="image/jpeg,image/png,image/webp" multiple className="hidden" onChange={handleInteriorUpload} disabled={uploadingInterior} />
+              {uploadingInterior ? <Loader2 className="w-6 h-6 text-slate-400 animate-spin" /> : <UploadCloud className="w-6 h-6 text-slate-400" />}
+              <span className="text-sm text-slate-500">{uploadingInterior ? "Uploading…" : "Add more photos"}</span>
+              <span className="text-xs text-slate-400">JPEG, PNG, WebP · Max 10MB each · Multiple allowed</span>
+            </label>
+            {uploadError && <p className="text-xs text-red-500">{uploadError}</p>}
+          </div>
 
           {serverError && (
             <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-4 py-3">

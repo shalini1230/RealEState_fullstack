@@ -63,6 +63,7 @@ model User {
   bookings      BookingQueue[] @relation("TenantBookings")
   notifications Notification[]
   wishlist      Wishlist[]
+  reviews       Review[]
 }
 
 model Profile {
@@ -93,6 +94,7 @@ model Property {
   images       String[]           @default([])
   gpsLat       Float?
   gpsLng       Float?
+  mapEmbedUrl  String?
 
   apartment    ApartmentDetails?
   hostel       HostelDetails?
@@ -100,6 +102,7 @@ model Property {
   commercial   CommercialDetails?
   bookingQueue BookingQueue[]
   wishlist     Wishlist[]
+  reviews      Review[]
 }
 
 model ApartmentDetails {
@@ -188,4 +191,18 @@ model Notification {
   isRead    Boolean          @default(false)
   link      String?
   createdAt DateTime         @default(now())
+}
+
+model Review {
+  id         String   @id @default(cuid())
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rating     Int
+  comment    String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([propertyId, userId])
 }

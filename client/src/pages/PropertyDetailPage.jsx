@@ -10,7 +10,8 @@ import {
   Landmark, Store, Wifi, UtensilsCrossed, Clock, Loader2,
   Trash2, User, CheckCircle2, XCircle, DoorOpen, Layers,
   TreePine, BarChart2, Mail, Phone, Pencil, Calendar,
-  Users, BedDouble, Heart, X, ChevronLeft, ChevronRight, Expand
+  Users, BedDouble, Heart, X, ChevronLeft, ChevronRight, Expand,
+  Star, Send
 } from "lucide-react"
 
 const TYPE_META = {
@@ -537,6 +538,138 @@ function OwnerQueuePanel({ propertyId, property, onStatusChange }) {
   )
 }
 
+// ── Review Section ────────────────────────────────────────────────────────────
+function StarRow({ value, hover, onChange, onHover, readonly = false }) {
+  return (
+    <div className="flex gap-1">
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button
+          key={n}
+          type="button"
+          disabled={readonly}
+          onClick={() => !readonly && onChange(n)}
+          onMouseEnter={() => !readonly && onHover(n)}
+          onMouseLeave={() => !readonly && onHover(0)}
+          className={`transition-transform ${readonly ? "cursor-default" : "hover:scale-110"}`}
+        >
+          <Star
+            className="w-6 h-6 transition-colors"
+            style={{
+              color: n <= (hover || value) ? "#f59e0b" : "#e2e8f0",
+              fill: n <= (hover || value) ? "#f59e0b" : "none",
+            }}
+          />
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function ReviewSection({
+  reviews, myRating, hoverRating, reviewComment, submittingReview, reviewError,
+  currentUser, isOwner, onRatingChange, onHoverChange, onCommentChange, onSubmit, onDelete,
+}) {
+  const avgRating = reviews.length ? (reviews.reduce((s, r) => s + r.rating, 0) / reviews.length) : 0
+  const myReview = currentUser ? reviews.find(r => r.userId === currentUser.id) : null
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-100 p-6 space-y-5">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Star className="w-4 h-4 text-amber-400" fill="#f59e0b" />
+          <h2 className="font-semibold text-slate-900">Reviews</h2>
+          {reviews.length > 0 && (
+            <span className="text-sm text-slate-400">
+              {avgRating.toFixed(1)} · {reviews.length} {reviews.length === 1 ? "review" : "reviews"}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Write a review — only for logged-in non-owners */}
+      {currentUser && !isOwner && (
+        <div className="bg-slate-50 rounded-xl p-4 space-y-3">
+          <p className="text-sm font-medium text-slate-700">
+            {myReview ? "Update your review" : "Rate this property"}
+          </p>
+          <StarRow
+            value={myRating}
+            hover={hoverRating}
+            onChange={onRatingChange}
+            onHover={onHoverChange}
+          />
+          <textarea
+            value={reviewComment}
+            onChange={e => onCommentChange(e.target.value)}
+            placeholder="Share your experience (optional)…"
+            rows={3}
+            className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 resize-none placeholder:text-slate-400"
+          />
+          {reviewError && <p className="text-xs text-red-500">{reviewError}</p>}
+          <div className="flex gap-2">
+            <button
+              onClick={onSubmit}
+              disabled={!myRating || submittingReview}
+              className="flex items-center gap-1.5 h-9 px-4 rounded-lg text-sm font-medium text-white disabled:opacity-50 transition-opacity"
+              style={{ background: "linear-gradient(135deg,#7c3aed,#a855f7)" }}
+            >
+              {submittingReview
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <Send className="w-3.5 h-3.5" />}
+              {myReview ? "Update" : "Submit"}
+            </button>
+            {myReview && (
+              <button
+                onClick={onDelete}
+                className="flex items-center gap-1.5 h-9 px-4 rounded-lg text-sm font-medium border border-red-200 text-red-500 hover:bg-red-50 transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> Delete
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {!currentUser && !isOwner && (
+        <p className="text-sm text-slate-400 italic">Log in to leave a review.</p>
+      )}
+
+      {/* Reviews list */}
+      {reviews.length === 0 ? (
+        <p className="text-sm text-slate-400">No reviews yet. Be the first to rate this property!</p>
+      ) : (
+        <div className="space-y-4">
+          {reviews.map(r => {
+            const name = r.user?.profile?.name || r.user?.email?.split("@")[0] || "User"
+            const isMe = currentUser?.id === r.userId
+            return (
+              <div key={r.id} className={`flex gap-3 ${isMe ? "bg-violet-50 rounded-xl p-3 -mx-1" : ""}`}>
+                <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ background: "var(--accent)" }}>
+                  {name.slice(0, 2).toUpperCase()}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-semibold text-slate-800">{name}</span>
+                    {isMe && <span className="text-xs text-violet-500 font-medium">You</span>}
+                    <div className="flex gap-0.5">
+                      {[1,2,3,4,5].map(n => (
+                        <Star key={n} className="w-3.5 h-3.5" style={{ color: n <= r.rating ? "#f59e0b" : "#e2e8f0", fill: n <= r.rating ? "#f59e0b" : "none" }} />
+                      ))}
+                    </div>
+                  </div>
+                  {r.comment && <p className="text-sm text-slate-600 mt-1 leading-relaxed">{r.comment}</p>}
+                  <p className="text-xs text-slate-400 mt-1">{new Date(r.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function PropertyDetailPage() {
   const { id } = useParams()
@@ -550,6 +683,14 @@ export default function PropertyDetailPage() {
   const [wishlisted, setWishlisted] = useState(false)
   const [wishlistLoading, setWishlistLoading] = useState(false)
   const [lightboxIdx, setLightboxIdx] = useState(null)
+  const [mapCoords, setMapCoords] = useState(null)
+  const [mapExact, setMapExact] = useState(false)
+  const [reviews, setReviews] = useState([])
+  const [myRating, setMyRating] = useState(0)
+  const [hoverRating, setHoverRating] = useState(0)
+  const [reviewComment, setReviewComment] = useState("")
+  const [submittingReview, setSubmittingReview] = useState(false)
+  const [reviewError, setReviewError] = useState("")
 
   useEffect(() => {
     apiFetch(`/properties/${id}`)
@@ -559,11 +700,87 @@ export default function PropertyDetailPage() {
   }, [id, navigate])
 
   useEffect(() => {
+    if (!property) return
+    if (property.mapEmbedUrl) return // rendered directly from property.mapEmbedUrl, skip geocoding
+    const hasGps = property.gpsLat != null && property.gpsLng != null
+                  && !(property.gpsLat === 0 && property.gpsLng === 0)
+    if (hasGps) {
+      setMapCoords({ lat: property.gpsLat, lng: property.gpsLng })
+      setMapExact(true)
+      return
+    }
+    const queries = [
+      [property.address, property.area, property.city].filter(Boolean).join(', '),
+      [property.area, property.city].filter(Boolean).join(', '),
+      property.city,
+    ].filter(Boolean)
+
+    const tryNext = (i) => {
+      if (i >= queries.length) return
+      fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(queries[i])}&format=json&limit=1&countrycodes=in`)
+        .then(r => r.json())
+        .then(data => {
+          if (data[0]) {
+            setMapCoords({ lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) })
+            setMapExact(false)
+          } else {
+            tryNext(i + 1)
+          }
+        })
+        .catch(() => tryNext(i + 1))
+    }
+    tryNext(0)
+  }, [property])
+
+  useEffect(() => {
     if (!currentUser || isOwner) return
     apiFetch(`/wishlist/check/${id}`)
       .then((d) => setWishlisted(d.wishlisted))
       .catch(() => {})
   }, [id, isOwner])
+
+  // Load reviews
+  useEffect(() => {
+    apiFetch(`/properties/${id}/reviews`)
+      .then(data => {
+        setReviews(data)
+        if (currentUser) {
+          const mine = data.find(r => r.userId === currentUser.id)
+          if (mine) { setMyRating(mine.rating); setReviewComment(mine.comment || "") }
+        }
+      })
+      .catch(() => {})
+  }, [id])
+
+  async function submitReview() {
+    if (!myRating) return
+    setSubmittingReview(true)
+    setReviewError("")
+    try {
+      const saved = await apiFetch(`/properties/${id}/reviews`, {
+        method: "POST",
+        body: JSON.stringify({ rating: myRating, comment: reviewComment }),
+      })
+      setReviews(prev => {
+        const idx = prev.findIndex(r => r.userId === currentUser.id)
+        if (idx >= 0) { const n = [...prev]; n[idx] = saved; return n }
+        return [saved, ...prev]
+      })
+    } catch (e) {
+      setReviewError(e.message || "Failed to submit review")
+    } finally {
+      setSubmittingReview(false)
+    }
+  }
+
+  async function deleteMyReview() {
+    try {
+      await apiFetch(`/properties/${id}/reviews/mine`, { method: "DELETE" })
+      setReviews(prev => prev.filter(r => r.userId !== currentUser.id))
+      setMyRating(0)
+      setReviewComment("")
+    } catch {}
+  }
 
   async function toggleWishlist() {
     if (!currentUser) return
@@ -747,29 +964,55 @@ export default function PropertyDetailPage() {
         )}
 
         {/* Map */}
-        {(property.gpsLat && property.gpsLng) || property.address ? (
+        {(property.mapEmbedUrl || mapCoords) && (
           <div className="bg-white rounded-2xl border border-slate-100 p-6 space-y-3">
-            <div className="flex items-center gap-2">
-              <MapPin className="w-4 h-4" style={{ color: "var(--accent)" }} />
-              <h2 className="font-semibold text-slate-900">Property Location</h2>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <MapPin className="w-4 h-4" style={{ color: "var(--accent)" }} />
+                <h2 className="font-semibold text-slate-900">Property Location</h2>
+              </div>
+              {!property.mapEmbedUrl && (
+                <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${mapExact ? 'bg-green-50 text-green-600 border-green-200' : 'bg-amber-50 text-amber-600 border-amber-200'}`}>
+                  {mapExact ? 'Exact GPS' : 'Approximate'}
+                </span>
+              )}
             </div>
-            <div className="rounded-xl overflow-hidden border border-slate-200" style={{ height: 280 }}>
-              <iframe
-                title="Property Location"
-                width="100%"
-                height="100%"
-                style={{ border: 0 }}
-                loading="lazy"
-                referrerPolicy="no-referrer-when-downgrade"
-                src={
-                  property.gpsLat && property.gpsLng
-                    ? `https://maps.google.com/maps?q=${property.gpsLat},${property.gpsLng}&z=16&output=embed`
-                    : `https://maps.google.com/maps?q=${encodeURIComponent(property.address)}&output=embed`
-                }
-              />
-            </div>
+            {property.mapEmbedUrl ? (
+              <div className="rounded-xl overflow-hidden border border-slate-200" style={{ height: 380 }}>
+                <iframe
+                  title="Property Location"
+                  width="100%"
+                  height="100%"
+                  style={{ border: 0 }}
+                  loading="lazy"
+                  src={property.mapEmbedUrl}
+                />
+              </div>
+            ) : (
+              <a
+                href={`https://www.google.com/maps/search/?api=1&query=${mapCoords.lat},${mapCoords.lng}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block rounded-xl overflow-hidden border border-slate-200 relative group cursor-pointer"
+                style={{ height: 380 }}
+              >
+                <iframe
+                  title="Property Location"
+                  width="100%"
+                  height="100%"
+                  style={{ border: 0, pointerEvents: 'none' }}
+                  loading="lazy"
+                  src={`https://maps.google.com/maps?q=loc:${mapCoords.lat},${mapCoords.lng}&z=17&output=embed`}
+                />
+                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-end justify-end p-3">
+                  <span className="bg-white text-slate-700 text-xs font-medium px-3 py-1.5 rounded-full shadow flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <MapPin className="w-3 h-3" /> Open in Google Maps ↗
+                  </span>
+                </div>
+              </a>
+            )}
           </div>
-        ) : null}
+        )}
 
         {/* Booking section for non-owners */}
         {!isOwner && (
@@ -847,6 +1090,23 @@ export default function PropertyDetailPage() {
             )}
           </div>
         </div>
+
+        {/* Reviews */}
+        <ReviewSection
+          reviews={reviews}
+          myRating={myRating}
+          hoverRating={hoverRating}
+          reviewComment={reviewComment}
+          submittingReview={submittingReview}
+          reviewError={reviewError}
+          currentUser={currentUser}
+          isOwner={isOwner}
+          onRatingChange={setMyRating}
+          onHoverChange={setHoverRating}
+          onCommentChange={setReviewComment}
+          onSubmit={submitReview}
+          onDelete={deleteMyReview}
+        />
 
       </main>
 

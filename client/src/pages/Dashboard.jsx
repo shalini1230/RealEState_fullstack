@@ -1,5 +1,6 @@
-import { useEffect, useState, useRef } from "react"
+import { useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
+import { AnimatePresence, motion } from "framer-motion"
 import { apiFetch } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -15,7 +16,7 @@ const SLIDES = [
     description: "Modern flats and luxury apartments in premium locations across the city. Verified listings, zero brokerage.",
     cta: "Browse Apartments",
     action: "APARTMENT",
-    image: "https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?w=1600&q=80",
+    image: "https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=1600&q=90",
     tag: "Apartments",
     accent: "#7c3aed",
   },
@@ -24,7 +25,7 @@ const SLIDES = [
     description: "Agricultural, residential, and commercial land for direct sale at competitive prices. GPS verified.",
     cta: "Explore Plots",
     action: "LAND",
-    image: "https://images.unsplash.com/photo-1625246333195-78d9c38ad449?w=1600&q=80",
+    image: "https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=1600&q=90",
     tag: "Land / Plots",
     accent: "#10b981",
   },
@@ -33,7 +34,7 @@ const SLIDES = [
     description: "Affordable, safe, and comfortable shared living for students and working professionals.",
     cta: "Find a PG",
     action: "HOSTEL",
-    image: "https://images.unsplash.com/photo-1566665797739-1674de7a421a?w=1600&q=80",
+    image: "https://images.unsplash.com/photo-1555854877-bab0e564b8d5?w=1600&q=90",
     tag: "Hostels & PGs",
     accent: "#8b5cf6",
   },
@@ -42,7 +43,7 @@ const SLIDES = [
     description: "Shops, showrooms, and office units in high-footfall commercial hubs. Ready to move in.",
     cta: "View Commercial",
     action: "COMMERCIAL",
-    image: "https://images.unsplash.com/photo-1524758631624-e2822e304c36?w=1600&q=80",
+    image: "https://images.unsplash.com/photo-1497366754035-f200968a6e72?w=1600&q=90",
     tag: "Commercial",
     accent: "#f59e0b",
   },
@@ -51,7 +52,7 @@ const SLIDES = [
     description: "Spacious villas and standalone homes for families seeking privacy, comfort, and prestige.",
     cta: "See Villas",
     action: "APARTMENT",
-    image: "https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?w=1600&q=80",
+    image: "https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?w=1600&q=90",
     tag: "Villas & Houses",
     accent: "#3b82f6",
   },
@@ -60,37 +61,40 @@ const SLIDES = [
     description: "Reach thousands of verified buyers and tenants. Simple, fast, and free to list on NestFinder.",
     cta: "List Property",
     action: "LIST",
-    image: "https://images.unsplash.com/photo-1512917774080-9991f1c4c750?w=1600&q=80",
+    image: "https://images.unsplash.com/photo-1570129477492-45c003edd2be?w=1600&q=90",
     tag: "For Owners",
     accent: "#7c3aed",
   },
 ]
 
+const slideVariants = {
+  enter: (dir) => ({ x: dir > 0 ? "6%" : "-6%", opacity: 0 }),
+  center: { x: 0, opacity: 1 },
+  exit: (dir) => ({ x: dir > 0 ? "-4%" : "4%", opacity: 0 }),
+}
+
+const fadeUp = {
+  hidden: { opacity: 0, y: 14 },
+  visible: (delay) => ({ opacity: 1, y: 0, transition: { duration: 0.5, delay } }),
+}
+
 function HeroCarousel({ navigate }) {
-  const [current, setCurrent] = useState(0)
-  const [prev, setPrev] = useState(null)
-  const [dir, setDir] = useState(1)
-  const [animating, setAnimating] = useState(false)
+  const [[current, dir], setSlide] = useState([0, 1])
   const [paused, setPaused] = useState(false)
-  const timerRef = useRef(null)
+  const AUTOPLAY_MS = 1000
 
   function goTo(idx) {
-    if (animating || idx === current) return
-    setDir(idx > current ? 1 : -1)
-    setPrev(current)
-    setCurrent(idx)
-    setAnimating(true)
-    setTimeout(() => { setPrev(null); setAnimating(false) }, 650)
+    setSlide(([c]) => (idx === c ? [c, dir] : [idx, idx > c ? 1 : -1]))
   }
+  function goNext() { setSlide(([c, d]) => [(c + 1) % SLIDES.length, 1]) }
+  function goPrev() { setSlide(([c, d]) => [(c - 1 + SLIDES.length) % SLIDES.length, -1]) }
 
-  function goNext() { goTo((current + 1) % SLIDES.length) }
-  function goPrev() { goTo((current - 1 + SLIDES.length) % SLIDES.length) }
-
+  // Autoplay — advances on its own; arrows/dots are an optional manual override, not required
   useEffect(() => {
     if (paused) return
-    timerRef.current = setInterval(goNext, 5000)
-    return () => clearInterval(timerRef.current)
-  }, [current, paused, animating])
+    const id = setInterval(goNext, AUTOPLAY_MS)
+    return () => clearInterval(id)
+  }, [current, paused])
 
   function handleCta(action) {
     if (action === "LIST") navigate("/properties/new")
@@ -98,7 +102,6 @@ function HeroCarousel({ navigate }) {
   }
 
   const slide = SLIDES[current]
-  const prevSlide = prev !== null ? SLIDES[prev] : null
 
   return (
     <div
@@ -107,111 +110,102 @@ function HeroCarousel({ navigate }) {
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
     >
-      {/* Previous slide (exits) */}
-      {prevSlide && (
-        <div
-          key={`prev-${prev}`}
+      <AnimatePresence initial={false} custom={dir} mode="popLayout">
+        <motion.div
+          key={current}
+          custom={dir}
+          variants={slideVariants}
+          initial="enter"
+          animate="center"
+          exit="exit"
+          transition={{ duration: 0.65, ease: [0.4, 0, 0.2, 1] }}
           className="absolute inset-0"
-          style={{
-            animation: `slideOut${dir > 0 ? "Left" : "Right"} 650ms cubic-bezier(0.4,0,0.2,1) forwards`,
-            zIndex: 1,
-          }}
         >
-          <img src={prevSlide.image} alt="" className="w-full h-full object-cover" />
-          <div className="absolute inset-0 bg-black/50" />
-          <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/40 to-transparent" />
-        </div>
-      )}
+          <img
+            src={slide.image}
+            alt={slide.title}
+            className="w-full h-full object-cover"
+            draggable={false}
+          />
+          <div className="absolute inset-0 bg-gradient-to-r from-black/70 via-black/25 to-black/10" />
 
-      {/* Current slide (enters) */}
-      <div
-        key={`curr-${current}`}
-        className="absolute inset-0"
-        style={{
-          animation: `slideIn${dir > 0 ? "Right" : "Left"} 650ms cubic-bezier(0.4,0,0.2,1) forwards`,
-          zIndex: 2,
-        }}
-      >
-        <img
-          src={slide.image}
-          alt={slide.title}
-          className="w-full h-full object-cover"
-          draggable={false}
-        />
-        <div className="absolute inset-0 bg-black/50" />
-        <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/40 to-transparent" />
+          {/* Text content */}
+          <div className="absolute inset-0 flex items-center">
+            <div className="px-6 sm:px-12 lg:px-16 max-w-2xl w-full">
+              {/* Tag chip */}
+              <motion.div
+                custom={0.2}
+                variants={fadeUp}
+                initial="hidden"
+                animate="visible"
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold text-white mb-4"
+                style={{
+                  background: `${slide.accent}55`,
+                  border: `1px solid ${slide.accent}99`,
+                  backdropFilter: "blur(8px)",
+                }}
+              >
+                <span className="w-1.5 h-1.5 rounded-full" style={{ background: slide.accent }} />
+                {slide.tag}
+              </motion.div>
 
-        {/* Text content */}
-        <div className="absolute inset-0 flex items-center">
-          <div className="px-6 sm:px-12 lg:px-16 max-w-2xl w-full">
-            {/* Tag chip */}
-            <div
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold text-white mb-4"
-              style={{
-                background: `${slide.accent}55`,
-                border: `1px solid ${slide.accent}99`,
-                animation: "fadeUpIn 500ms 200ms both",
-                backdropFilter: "blur(8px)",
-              }}
-            >
-              <span className="w-1.5 h-1.5 rounded-full" style={{ background: slide.accent }} />
-              {slide.tag}
+              {/* Heading */}
+              <motion.h2
+                custom={0.3}
+                variants={fadeUp}
+                initial="hidden"
+                animate="visible"
+                className="text-3xl sm:text-4xl lg:text-[2.8rem] font-bold text-white leading-[1.15] mb-3"
+                style={{ textShadow: "0 2px 16px rgba(0,0,0,0.9), 0 1px 4px rgba(0,0,0,0.8)" }}
+              >
+                {slide.title}
+              </motion.h2>
+
+              {/* Description */}
+              <motion.p
+                custom={0.4}
+                variants={fadeUp}
+                initial="hidden"
+                animate="visible"
+                className="text-white/90 text-sm sm:text-base leading-relaxed mb-6 max-w-lg font-medium"
+                style={{ textShadow: "0 1px 8px rgba(0,0,0,0.9)" }}
+              >
+                {slide.description}
+              </motion.p>
+
+              {/* CTA */}
+              <motion.button
+                custom={0.5}
+                variants={fadeUp}
+                initial="hidden"
+                animate="visible"
+                onClick={() => handleCta(slide.action)}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white transition-transform hover:scale-[1.03] active:scale-[0.98]"
+                style={{ background: slide.accent, boxShadow: `0 4px 24px ${slide.accent}55` }}
+              >
+                {slide.cta}
+                <ChevronRight className="w-4 h-4" />
+              </motion.button>
             </div>
-
-            {/* Heading */}
-            <h2
-              className="text-3xl sm:text-4xl lg:text-[2.8rem] font-bold text-white leading-[1.15] mb-3"
-              style={{
-                animation: "fadeUpIn 500ms 300ms both",
-                textShadow: "0 2px 16px rgba(0,0,0,0.9), 0 1px 4px rgba(0,0,0,0.8)",
-              }}
-            >
-              {slide.title}
-            </h2>
-
-            {/* Description */}
-            <p
-              className="text-white/90 text-sm sm:text-base leading-relaxed mb-6 max-w-lg font-medium"
-              style={{
-                animation: "fadeUpIn 500ms 400ms both",
-                textShadow: "0 1px 8px rgba(0,0,0,0.9)",
-              }}
-            >
-              {slide.description}
-            </p>
-
-            {/* CTA */}
-            <button
-              onClick={() => handleCta(slide.action)}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white transition-transform hover:scale-[1.03] active:scale-[0.98]"
-              style={{
-                background: slide.accent,
-                boxShadow: `0 4px 24px ${slide.accent}55`,
-                animation: "fadeUpIn 500ms 500ms both",
-              }}
-            >
-              {slide.cta}
-              <ChevronRight className="w-4 h-4" />
-            </button>
           </div>
-        </div>
 
-        {/* Progress bar */}
-        {!paused && (
-          <div className="absolute bottom-0 left-0 right-0 h-[3px] bg-white/10 z-10">
-            <div
-              key={`progress-${current}`}
-              className="h-full"
-              style={{
-                background: slide.accent,
-                animation: "progressBar 5s linear forwards",
-              }}
-            />
-          </div>
-        )}
-      </div>
+          {/* Progress bar */}
+          {!paused && (
+            <div className="absolute bottom-0 left-0 right-0 h-[3px] bg-white/10 z-10">
+              <motion.div
+                key={`progress-${current}`}
+                className="h-full"
+                style={{ background: slide.accent }}
+                initial={{ width: "0%" }}
+                animate={{ width: "100%" }}
+                transition={{ duration: AUTOPLAY_MS / 1000, ease: "linear" }}
+              />
+            </div>
+          )}
+        </motion.div>
+      </AnimatePresence>
 
-      {/* Arrows */}
+      {/* Arrows — optional manual override, autoplay above keeps running without them */}
       <button
         onClick={goPrev}
         className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 z-20 w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-black/30 hover:bg-black/55 backdrop-blur-sm border border-white/15 flex items-center justify-center text-white transition-all hover:scale-110"
@@ -246,15 +240,6 @@ function HeroCarousel({ navigate }) {
       <div className="absolute top-4 right-4 z-20 text-white/50 text-xs tabular-nums font-medium">
         {current + 1} / {SLIDES.length}
       </div>
-
-      <style>{`
-        @keyframes slideInRight  { from { transform: translateX(6%);  opacity: 0 } to { transform: translateX(0); opacity: 1 } }
-        @keyframes slideInLeft   { from { transform: translateX(-6%); opacity: 0 } to { transform: translateX(0); opacity: 1 } }
-        @keyframes slideOutLeft  { from { transform: translateX(0);  opacity: 1 } to { transform: translateX(-4%); opacity: 0 } }
-        @keyframes slideOutRight { from { transform: translateX(0);  opacity: 1 } to { transform: translateX(4%);  opacity: 0 } }
-        @keyframes fadeUpIn      { from { opacity: 0; transform: translateY(14px) } to { opacity: 1; transform: translateY(0) } }
-        @keyframes progressBar   { from { width: 0% } to { width: 100% } }
-      `}</style>
     </div>
   )
 }

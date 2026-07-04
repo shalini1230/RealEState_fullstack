@@ -116,8 +116,9 @@ const PropertySchema = z.object({
   vacancies: z.coerce.number().int().min(1).default(1),
   details: z.record(z.unknown()),
   images: z.array(z.string().url()).optional().default([]),
-  gpsLat: z.coerce.number().optional(),
-  gpsLng: z.coerce.number().optional(),
+  gpsLat: z.union([z.null(), z.coerce.number()]).optional(),
+  gpsLng: z.union([z.null(), z.coerce.number()]).optional(),
+  mapEmbedUrl: z.union([z.null(), z.string().url()]).optional(),
 });
 
 const BookingSchema = z.object({
@@ -205,25 +206,20 @@ app.post('/auth/login', async (req, res) => {
   if (!email) return res.status(400).json({ error: 'Email required' });
 
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  setOtp(email, { otp, expiry: Date.now() + 10 * 60_000 });
+  setOtp(email, { otp, expires: Date.now() + 1 * 60_000 });
+
+  console.log(`\n🔑 OTP for ${email}: ${otp}\n`);
 
   try {
     await mailer.sendMail({
       from: `"NestFinder" <${process.env.GMAIL_USER}>`,
       to: email,
-      subject: 'Your NestFinder verification code',
-      html: `
-        <div style="font-family:sans-serif;max-width:400px;margin:auto">
-          <h2 style="color:#7c3aed">NestFinder</h2>
-          <p>Your verification code is:</p>
-          <h1 style="letter-spacing:8px;color:#7c3aed">${otp}</h1>
-          <p style="color:#888">This code expires in 10 minutes.</p>
-        </div>
-      `,
+      subject: 'Your NestFinder OTP',
+      html: `<p>Your NestFinder login OTP is: <strong style="font-size:24px">${otp}</strong></p><p>Valid for 1 minute.</p>`,
     });
   } catch (err) {
-    console.error('Email error:', err.message);
-    return res.status(500).json({ error: 'Failed to send OTP email.' });
+    console.error('Email send error:', err.message);
+    // OTP still printed to console as fallback
   }
 
   res.json({ message: 'OTP sent to email' });
@@ -234,14 +230,12 @@ app.post('/auth/verify', async (req, res) => {
   if (!email || !token) return res.status(400).json({ error: 'Email and token required' });
 
   const record = getOtp(email);
-  if (!record) return res.status(400).json({ error: 'No active OTP session. Please request a new code.' });
-  if (Date.now() > record.expiry) {
+  if (!record) return res.status(400).json({ error: 'No OTP found. Please request a new one.' });
+  if (Date.now() > record.expires) {
     deleteOtp(email);
-    return res.status(400).json({ error: 'OTP has expired. Please request a new one.' });
+    return res.status(400).json({ error: 'OTP expired. Please request a new one.' });
   }
-  if (record.otp !== token) {
-    return res.status(400).json({ error: 'Invalid OTP. Please try again.' });
-  }
+  if (record.otp !== token) return res.status(400).json({ error: 'Invalid OTP. Please try again.' });
 
   deleteOtp(email);
 
@@ -336,6 +330,30 @@ app.post('/properties', requireAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || 'Failed to create property' });
+  }
+});
+
+const RESOLVE_ALLOWED_HOSTS = ['maps.app.goo.gl', 'goo.gl', 'g.co'];
+
+app.get('/resolve-map-link', async (req, res) => {
+  const parsed = z.string().url().safeParse(req.query.url);
+  if (!parsed.success) return res.status(400).json({ error: 'Invalid url' });
+
+  let target;
+  try {
+    target = new URL(parsed.data);
+  } catch {
+    return res.status(400).json({ error: 'Invalid url' });
+  }
+  if (!RESOLVE_ALLOWED_HOSTS.includes(target.hostname)) {
+    return res.status(400).json({ error: 'Only Google Maps short links are supported' });
+  }
+
+  try {
+    const response = await fetch(target.toString(), { redirect: 'follow' });
+    res.json({ resolvedUrl: response.url });
+  } catch {
+    res.status(502).json({ error: 'Could not resolve link' });
   }
 });
 
@@ -716,6 +734,53 @@ app.delete('/wishlist/:propertyId', requireAuth, async (req, res) => {
     where: { userId: req.user.id, propertyId: req.params.propertyId },
   });
   res.json({ wishlisted: false });
+});
+
+// ── Review routes ─────────────────────────────────────────────────────────────
+
+// GET /properties/:id/reviews — all reviews for a property
+app.get('/properties/:id/reviews', async (req, res) => {
+  try {
+    const reviews = await prisma.review.findMany({
+      where: { propertyId: req.params.id },
+      include: { user: { select: { id: true, email: true, profile: { select: { name: true } } } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json(reviews);
+  } catch (err) {
+    if (err.message?.includes('review')) return res.json([]); // table not migrated yet
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /properties/:id/reviews — create or update review (one per user per property)
+app.post('/properties/:id/reviews', requireAuth, async (req, res) => {
+  try {
+    const { rating, comment } = req.body;
+    if (!rating || rating < 1 || rating > 5) return res.status(400).json({ error: 'Rating must be 1-5' });
+    const property = await prisma.property.findUnique({ where: { id: req.params.id } });
+    if (!property) return res.status(404).json({ error: 'Property not found' });
+    if (property.ownerId === req.user.id) return res.status(403).json({ error: 'Owners cannot review their own property' });
+    const review = await prisma.review.upsert({
+      where: { propertyId_userId: { propertyId: req.params.id, userId: req.user.id } },
+      update: { rating: Number(rating), comment: comment || null },
+      create: { propertyId: req.params.id, userId: req.user.id, rating: Number(rating), comment: comment || null },
+      include: { user: { select: { id: true, email: true, profile: { select: { name: true } } } } },
+    });
+    res.json(review);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /properties/:id/reviews/mine — delete own review
+app.delete('/properties/:id/reviews/mine', requireAuth, async (req, res) => {
+  try {
+    await prisma.review.deleteMany({ where: { propertyId: req.params.id, userId: req.user.id } });
+    res.json({ message: 'Review deleted' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── Error handler ─────────────────────────────────────────────────────────────
